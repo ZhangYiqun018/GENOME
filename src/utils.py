@@ -1,6 +1,6 @@
-from typing import List
 import os
 import glob
+from typing import List
 
 import time
 from peft import LoraConfig
@@ -9,8 +9,15 @@ from loguru import logger
 from safetensors.torch import load_file, save_file
 
 def get_base_url(ports: List[int]) -> List[str]:
-    """Get base urls from ports."""
-    return [f"http://0.0.0.0:{port}/v1" for port in ports]
+    """Build base URLs from ports, honoring optional VLLM_HOST env override."""
+    host = os.getenv("VLLM_HOST")
+    if not host:
+        host = "localhost"
+        logger.warning("VLLM_HOST not set; defaulting base URLs to localhost")
+    base_url = [f"http://{host}:{port}/v1" for port in ports]
+    logger.info(f"BASE URL: {base_url}")
+    
+    return base_url
 
 def get_lora_pools(lora_dir: str) -> List[str]:
     """do not change this function, it is used for Model Swarms / Genome / GenomePlus."""

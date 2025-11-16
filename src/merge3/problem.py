@@ -50,11 +50,14 @@ class Merge3Problem:
         individual.save_individual(out_dir)
 
         scores = self.merger.method.evaluate(individuals=[individual])
+        if not scores or individual.id not in scores:
+            raise RuntimeError(
+                f"No evaluation results returned for individual {individual.id}; "
+                "check earlier evaluation logs for errors."
+            )
         weighted_score = scores[individual.id]["weighted_score"]
         logger.info(
-            "Merge3 genotype produced score %.4f on parents %s",
-            weighted_score,
-            parent_paths,
+            f"Merge3 genotype produced score {weighted_score:.4f} on parents {parent_paths}"
         )
         return EvaluationResult(
             individual=individual,

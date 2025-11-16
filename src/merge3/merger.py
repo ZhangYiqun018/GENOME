@@ -23,7 +23,7 @@ class LoRAMerger:
         if not any(weights):
             weights = [1.0] * len(parent_paths)
 
-        logger.debug("Merging parents %s with weights %s", parent_paths, weights)
+        logger.debug(f"Merging parents {parent_paths} with weights {weights}")
         state_dicts = [load_lora_weight(path) for path in parent_paths]
         merged_state = self.method.merge_lora_weights(
             lora_state_dicts=state_dicts,

@@ -14,6 +14,13 @@ class Merge3Config(BaseConfig):
     variable_bounds: Tuple[float, float] = (0.0, 1.0)
     parent_sample_size: int = 2
     save_intermediate: bool = True
+    # align with BaseMethod expectations for workspace naming/logging
+    N: int = field(init=False)
+
+    def __post_init__(self):
+        super().__post_init__()
+        # use nsga_population as the effective population size
+        self.N = self.nsga_population
 
     def validate(self):
         super().validate()

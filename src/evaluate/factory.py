@@ -10,7 +10,6 @@ from src.evaluate.MMLUPro import MMLUPro
 from src.evaluate.DROP import DROP
 from src.evaluate.MGSM import MGSM
 from src.evaluate.FLORES101 import FLORES101
-from src.evaluate.TRUTHFULQA import TRUTHFULQA
 from src.evaluate.BBH import BBH
 from enum import Enum
 
@@ -78,6 +77,13 @@ class EvaluatorFactory:
         elif task == Benchmark.FLORES37:
             return FLORES101(model_name_or_path=self.model_name_or_path, language_numbers=37)
         elif task == Benchmark.TRUTHFULQA:
+            try:
+                from src.evaluate.TRUTHFULQA import TRUTHFULQA
+            except ModuleNotFoundError as exc:
+                raise ModuleNotFoundError(
+                    "TRUTHFULQA evaluator not available; missing `src.evaluate.TRUTHFULQA`. "
+                    "Add the evaluator or remove truthfulqa from tasks."
+                ) from exc
             return TRUTHFULQA()
         elif task == Benchmark.BBH:
             return BBH()
