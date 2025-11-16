@@ -22,6 +22,10 @@ def parse_args():
     parser.add_argument("--plot_enabled", action="store_true")
     parser.add_argument("--early_stop", action="store_true")
     parser.add_argument("--early_stop_iter", type=int, default=5)
+    parser.add_argument(
+        "--workspace_prefix", type=str, default=None,
+        help="Optional base directory prefix for workspace outputs"
+    )
     return parser.parse_args()
 
 
@@ -48,6 +52,7 @@ def main():
         parent_sample_size=args.parent_sample_size,
         variable_bounds=tuple(args.variable_bounds),
         save_intermediate=True,
+        workspace_prefix=args.workspace_prefix,
     )
 
     method = Merge3LoRAMethod(config)

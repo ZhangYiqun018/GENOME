@@ -52,6 +52,10 @@ def parse_args():
                         help='Early stopping iteration threshold')
     parser.add_argument('--unable_random', action='store_true',
                         help='Disable random initialization')
+    parser.add_argument(
+        "--workspace_prefix", type=str, default=None,
+        help="Optional base directory prefix for workspace outputs"
+    )
     
     args = parser.parse_args()
     ## task_weights normalization
@@ -88,6 +92,7 @@ def main():
         phi_cognitive=args.phi_cognitive,
         phi_social=args.phi_social,
         phi_repel=args.phi_repel,
+        workspace_prefix=args.workspace_prefix,
     )
     
     # initialize and run PSO

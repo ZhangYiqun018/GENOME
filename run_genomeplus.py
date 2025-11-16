@@ -43,6 +43,10 @@ def parse_args():
     parser.add_argument(
         '--ports', type=int, nargs='+', default=[18177, 36048, 22246, 13732, 43782, 35293, 55779, 11435],
     )
+    parser.add_argument(
+        "--workspace_prefix", type=str, default=None,
+        help="Optional base directory prefix for workspace outputs"
+    )
     parser.add_argument('--init_population_size', type=int, default=10)
     parser.add_argument('--max_population_size', type=int, default=20)
 
@@ -107,6 +111,7 @@ def main():
         early_stop_iter=args.early_stop_iter,
         method=args.method,
         selection_method=args.selection_method,
+        workspace_prefix=args.workspace_prefix,
     )
     genomeplus = GenomePlus(config=config)
     genomeplus.search()

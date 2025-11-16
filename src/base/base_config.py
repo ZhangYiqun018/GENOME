@@ -19,6 +19,8 @@ class BaseConfig:
     early_stop: bool
     early_stop_iter: int
     seed: int
+    # optional; keep as keyword-only to avoid ordering issues in subclasses
+    workspace_prefix: Optional[str] = field(default=None, kw_only=True)
     
     def __post_init__(self):
         self.optimizer_time = datetime.now().isoformat()

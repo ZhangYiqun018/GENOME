@@ -69,8 +69,10 @@ class BaseMethod(ABC):
         self.id = uuid.uuid4().hex
         task_name = "_".join(self.tasks)
         method_name = self.__class__.__name__.lower()
+        base_dir = self.config.workspace_prefix or "."
         
         self.workspace = os.path.join(
+            base_dir,
             f"{method_name}_workspace",
             task_name,
             f"N{self.config.N}_{self.combine_method.value}",

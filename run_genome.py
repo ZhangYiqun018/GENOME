@@ -40,6 +40,10 @@ def parse_args():
         '--ports', type=int, nargs='+', default=[18177, 36048, 22246, 13732, 43782, 35293, 55779, 11435],
     )
     parser.add_argument(
+        "--workspace_prefix", type=str, default=None,
+        help="Optional base directory prefix for workspace outputs"
+    )
+    parser.add_argument(
         '--population_size', type=int, default=10, 
     )
     parser.add_argument(
@@ -94,6 +98,7 @@ def main():
         early_stop_iter=args.early_stop_iter,
         seed=args.seed,
         method = "roulette",
+        workspace_prefix=args.workspace_prefix,
     )
     genome = Genome(config=config)
     

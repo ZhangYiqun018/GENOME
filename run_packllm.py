@@ -25,6 +25,10 @@ def parse_args():
     parser.add_argument(
         '--ports', type=int, nargs='+', default=[9112],
     )
+    parser.add_argument(
+        "--workspace_prefix", type=str, default=None,
+        help="Optional base directory prefix for workspace outputs"
+    )
     return parser.parse_args()
 
 def main():
@@ -46,6 +50,7 @@ def main():
         early_stop_iter=args.early_stop_iter,
         plot_enabled=args.plot_enabled,
         combine_method=args.combine_method,
+        workspace_prefix=args.workspace_prefix,
     )
     
     packllm = PackLLM(config=config)
