@@ -1,14 +1,15 @@
-import random
 import time
-from typing import List
+from typing import List, Optional
 
+from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.optimize import minimize
 from loguru import logger
 
 from src.base.base_method import BaseMethod
 from src.genome.individual import Individual
 from src.merge3.config import Merge3Config
 from src.merge3.merger import LoRAMerger
-from src.merge3.problem import Merge3Problem
+from src.merge3.pymoo_problem import Merge3PymooProblem
 
 
 class Merge3LoRAMethod(BaseMethod):
@@ -19,109 +20,60 @@ class Merge3LoRAMethod(BaseMethod):
         super().__init__(config)
         config.validate()
 
-        self.rng = random.Random(config.seed)
         self.merger = LoRAMerger(self, lora_config_path=self.pools[0])
-        self.problem = Merge3Problem(
-            merger=self.merger,
-            pools=self.pools,
-            parent_sample_size=config.parent_sample_size,
-            rng=self.rng,
-        )
         self.individuals: List = []
-
-    def initialize(self) -> None:
-        """Generate and evaluate an initial population before the search loop."""
-        logger.info(
-            f"Initializing Merge3 population with {self.merge3_config.nsga_population} candidates..."
-        )
-        start_time = time.time()
-        self.individuals = []
-
-        # 1) materialize nsga_population individuals
-        for _ in range(self.merge3_config.nsga_population):
-            genotype = [
-                self.rng.uniform(*self.merge3_config.variable_bounds)
-                for _ in range(self.merge3_config.genotype_dimension)
-            ]
-            parent_paths = self.problem.sample_parents()
-            out_dir, merged_state = self.merger.materialize(genotype, parent_paths)
-            individual = Individual(
-                id=out_dir.split("_")[-1],
-                x=merged_state,
-                parent=list(parent_paths),
-                weight_path=out_dir,
-                lora_config_path=self.merger.lora_config_path,
-                model_name_or_path=self.model_name_or_path,
-            )
-            individual.save_individual(out_dir)
-            self.individuals.append(individual)
-
-        # 2) evaluate all initialized individuals together
-        weighted_scores = self.evaluate(individuals=self.individuals, split="valid")
-        for individual_id, result in weighted_scores.items():
-            self.update_global(
-                id=individual_id,
-                fitness_score=result["weighted_score"],
-                path=result["path"],
-                task_scores=result["task_scores"],
-            )
-
-        elapsed = time.time() - start_time
-        self.update_optim_state(step=0, time=elapsed, weighted_scores=weighted_scores)
-        self.save_optim_state(self.state)
-        self.report_state(step=0)
-        logger.info(
-            f"Initialization completed: {len(self.individuals)} individuals, time {elapsed:.2f}s."
-        )
 
     def search(self):
         logger.info(
-            f"Starting Merge3 search: {self.merge3_config.nsga_generations} "
+            f"Starting Merge3 search (pymoo NSGA-II): {self.merge3_config.nsga_generations} "
             f"generations x {self.merge3_config.nsga_population} population"
         )
-        # Initial population evaluation (generation 0)
-        self.initialize()
 
-        best_individual = max(self.individuals, key=lambda ind: ind.fitness_score)
-        best_score = best_individual.fitness_score
+        if len(self.pools) < self.merge3_config.parent_sample_size:
+            raise ValueError("Not enough pools to sample parents for Merge3")
 
-        # Main search loop starts from generation 1
-        for generation in range(1, self.merge3_config.nsga_generations):
-            start_time = time.time()
-            logger.info(f"Generation {generation}")
-            successful = 0
-            for _ in range(self.merge3_config.nsga_population):
-                genotype = [
-                    self.rng.uniform(*self.merge3_config.variable_bounds)
-                    for _ in range(self.merge3_config.genotype_dimension)
-                ]
-                try:
-                    result = self.problem.evaluate_genotype(genotype)
-                except Exception as exc:
-                    logger.error(f"Failed to evaluate genotype {genotype}: {exc}")
-                    continue
-                self.individuals.append(result.individual)
-                successful += 1
-                if result.weighted_score > best_score:
-                    best_score = result.weighted_score
-                    best_individual = result.individual
-                    self.update_global(
-                        id=result.individual.id,
-                        fitness_score=result.weighted_score,
-                        path=result.individual.weight_path,
-                        task_scores=result.task_scores,
-                    )
-            elapsed = time.time() - start_time
-            if successful == 0:
-                raise RuntimeError(
-                    "Merge3 search aborted: no individuals evaluated successfully in "
-                    f"generation {generation}. Check earlier errors before retrying."
-                )
-            self.update_optim_state(step=generation, time=elapsed)
-            self.report_state(step=generation)
+        parent_paths = self.pools[: self.merge3_config.parent_sample_size]
+        problem = Merge3PymooProblem(
+            method=self,
+            merger=self.merger,
+            parent_paths=parent_paths,
+            genotype_dimension=self.merge3_config.genotype_dimension,
+            variable_bounds=self.merge3_config.variable_bounds,
+        )
+        algorithm = NSGA2(
+            pop_size=self.merge3_config.nsga_population,
+            eliminate_duplicates=True,
+        )
 
+        start_time = time.time()
+        minimize(
+            problem,
+            algorithm,
+            ("n_gen", self.merge3_config.nsga_generations),
+            seed=self.merge3_config.seed,
+            verbose=False,
+        )
+        elapsed = time.time() - start_time
+
+        best_individual: Optional[Individual] = problem.best_individual
         if best_individual is None:
             logger.warning("Merge3 search produced no individual; aborting test phase")
             return
+
+        best_score = problem.best_score
+        best_task_scores = problem.best_task_scores or {}
+        best_path = problem.best_path or best_individual.weight_path
+
+        self.individuals = [best_individual]
+        self.update_global(
+            id=best_individual.id,
+            fitness_score=best_score,
+            path=best_path,
+            task_scores=best_task_scores,
+        )
+        self.update_optim_state(
+            step=self.merge3_config.nsga_generations - 1, time=elapsed
+        )
+        self.report_state(step=self.merge3_config.nsga_generations - 1)
 
         self.ensemble_test(individuals=[best_individual], split="test")
