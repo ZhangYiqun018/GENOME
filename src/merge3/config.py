@@ -13,7 +13,7 @@ class Merge3Config(BaseConfig):
     genotype_dimension: int = 2
     variable_bounds: Tuple[float, float] = (0.0, 1.0)
     parent_sample_size: int = 2
-    save_intermediate: bool = True
+    save_intermediate: bool = False
     # align with BaseMethod expectations for workspace naming/logging
     N: int = field(init=False)
 

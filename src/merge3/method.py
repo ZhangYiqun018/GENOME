@@ -32,13 +32,15 @@ class Merge3LoRAMethod(BaseMethod):
         if len(self.pools) < self.merge3_config.parent_sample_size:
             raise ValueError("Not enough pools to sample parents for Merge3")
 
-        parent_paths = self.pools[: self.merge3_config.parent_sample_size]
         problem = Merge3PymooProblem(
             method=self,
             merger=self.merger,
-            parent_paths=parent_paths,
+            pools=self.pools,
+            parent_sample_size=self.merge3_config.parent_sample_size,
             genotype_dimension=self.merge3_config.genotype_dimension,
             variable_bounds=self.merge3_config.variable_bounds,
+            seed=self.merge3_config.seed,
+            save_intermediate=self.merge3_config.save_intermediate,
         )
         algorithm = NSGA2(
             pop_size=self.merge3_config.nsga_population,

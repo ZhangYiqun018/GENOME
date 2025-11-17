@@ -1,3 +1,6 @@
+import os
+import random
+import shutil
 import numpy as np
 from typing import List, Optional, Sequence
 
@@ -5,6 +8,7 @@ from pymoo.core.problem import Problem
 
 from src.genome.individual import Individual
 from src.merge3.merger import LoRAMerger
+from loguru import logger
 
 
 class Merge3PymooProblem(Problem):
@@ -14,18 +18,26 @@ class Merge3PymooProblem(Problem):
         self,
         method,
         merger: LoRAMerger,
-        parent_paths: Sequence[str],
+        pools: Sequence[str],
+        parent_sample_size: int,
         genotype_dimension: int,
         variable_bounds: Sequence[float],
+        seed: int,
+        save_intermediate: bool,
     ) -> None:
-        if len(parent_paths) < 2:
+        if parent_sample_size < 2:
             raise ValueError("Merge3 requires at least two parent adapters.")
+        if len(pools) < parent_sample_size:
+            raise ValueError("Not enough pools to sample parents for Merge3.")
         if len(variable_bounds) != 2:
             raise ValueError("variable_bounds must contain (low, high).")
 
         self.method = method
         self.merger = merger
-        self.parent_paths: List[str] = list(parent_paths)
+        self.pools: List[str] = list(pools)
+        self.parent_sample_size = parent_sample_size
+        self.rng = random.Random(seed)
+        self.save_intermediate = save_intermediate
         self.best_score: float = float("-inf")
         self.best_individual: Optional[Individual] = None
         self.best_task_scores: Optional[dict] = None
@@ -44,12 +56,13 @@ class Merge3PymooProblem(Problem):
 
     def _evaluate(self, x, out, *args, **kwargs):
         genotype = [float(val) for val in np.asarray(x).tolist()]
-        out_dir, merged_state = self.merger.materialize(genotype, self.parent_paths)
+        parent_paths = self.rng.sample(self.pools, self.parent_sample_size)
+        out_dir, merged_state = self.merger.materialize(genotype, parent_paths)
 
         individual = Individual(
             id=out_dir.split("_")[-1],
             x=merged_state,
-            parent=list(self.parent_paths),
+            parent=list(parent_paths),
             weight_path=out_dir,
             model_name_or_path=self.merger.method.model_name_or_path,
             lora_config_path=self.merger.lora_config_path,
@@ -67,7 +80,18 @@ class Merge3PymooProblem(Problem):
         out["F"] = [-weighted_score]
 
         if weighted_score > self.best_score:
+            if (
+                not self.save_intermediate
+                and self.best_path
+                and os.path.isdir(self.best_path)
+                and self.best_path != out_dir
+            ):
+                logger.debug(f"Deleting previous best adapter at {self.best_path}")
+                shutil.rmtree(self.best_path, ignore_errors=True)
             self.best_score = weighted_score
             self.best_individual = individual
             self.best_task_scores = scores[individual.id]["task_scores"]
-            self.best_path = scores[individual.id]["path"]
+            self.best_path = out_dir
+        elif not self.save_intermediate:
+            logger.debug(f"Deleting non-best adapter at {out_dir}")
+            shutil.rmtree(out_dir, ignore_errors=True)
