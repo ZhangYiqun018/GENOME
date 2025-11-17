@@ -1,12 +1,13 @@
 import random
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any, Literal
+from typing import Dict, List, Optional, Any, Literal, Callable
 import json
 import os
 from loguru import logger
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter, defaultdict
 import torch
+from evaluation.pipeline import EvaluationPipeline
 from src.evaluate.eval import CombineMethod
 from src.utils import load_lora_weight
 from src.base.merge_utils import process_ties, process_dare_linear, process_dare_ties, process_linear, process_blxalpha, process_random
@@ -57,6 +58,7 @@ class BaseMethod(ABC):
         
         # Initialize workspace and state
         self.state = {}
+        self.pipeline_hooks: Dict[str, List[Callable[..., None]]] = defaultdict(list)
         self.init_workspace()
         self.init_models()
         
@@ -177,35 +179,102 @@ class BaseMethod(ABC):
                     logger.info(f"ID: {result['id']}, Perplexity: {result['perplexity']:.4f}")
                 except Exception as e:
                     logger.error(f"Error processing future result: {str(e)}")
-        
+
         return perplexity
-    
-    def evaluate_single_task(self, individuals: List, task: str, split: str = "valid") -> Dict[str, Any]:
+
+    def register_pipeline_hook(self, event: str, callback: Callable[..., None]) -> None:
+        """Register a global pipeline hook for evaluation routines."""
+
+        self.pipeline_hooks[event].append(callback)
+
+    def _create_pipeline(self, **steps: Callable[..., Any]) -> EvaluationPipeline:
+        pipeline = EvaluationPipeline()
+        pipeline.configure(**steps)
+        for event, callbacks in self.pipeline_hooks.items():
+            for hook in callbacks:
+                pipeline.register_hook(event, hook)
+        return pipeline
+
+    def evaluate_single_task(
+        self,
+        individuals: List,
+        task: str,
+        split: str = "valid",
+        *,
+        return_predictions: bool = False,
+        calculate_ppl: bool = False,
+    ) -> Dict[str, Any]:
         """Evaluate individuals on a single task."""
         task_scores = {}
+
+        def prepare_input(individual, current_task: str, context: Dict[str, Any]) -> Dict[str, Any]:
+            llm = self.llms[context["individual_index"] % len(self.llms)]
+            return {
+                "individual": individual,
+                "task": current_task,
+                "split": context.get("split", "valid"),
+                "llm": llm,
+                "return_predictions": context.get("return_predictions", False),
+                "calculate_ppl": context.get("calculate_ppl", False),
+            }
+
+        def run_inference(payload: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+            individual = payload["individual"]
+            return individual.fitness(
+                task=payload["task"],
+                llm=payload["llm"],
+                lora_path=individual.weight_path,
+                split=payload["split"],
+                calculate_ppl=payload["calculate_ppl"],
+                return_predictions=payload["return_predictions"],
+            )
+
+        def score(inference_output: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+            return inference_output
+
+        def post_process(task_name: str, scored_output: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+            processed = {
+                "id": scored_output["id"],
+                "score": scored_output["score"],
+                "path": scored_output.get("path"),
+            }
+            if "predictions" in scored_output:
+                processed["predictions"] = scored_output["predictions"]
+            if "perplexity" in scored_output:
+                processed["perplexity"] = scored_output["perplexity"]
+            return processed
+
+        pipeline = self._create_pipeline(
+            prepare_input=prepare_input,
+            run_inference=run_inference,
+            score=score,
+            post_process=post_process,
+        )
+
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = []
             for idx, individual in enumerate(individuals):
                 futures.append(
                     executor.submit(
-                        individual.fitness,
-                        task=task,
-                        llm=self.llms[idx % len(self.llms)],
-                        lora_path=individual.weight_path,
-                        split=split
+                        pipeline.run,
+                        individual,
+                        [task],
+                        context={
+                            "split": split,
+                            "individual_index": idx,
+                            "method": "evaluate_single_task",
+                            "return_predictions": return_predictions,
+                            "calculate_ppl": calculate_ppl,
+                        },
                     )
                 )
-            #TODO: try to fix parallel bug, delete as_completed
             for future in as_completed(futures):
                 try:
-                    result = future.result()
-                    task_scores[result["id"]] = {
-                        "score": result["score"],
-                        "path": result["path"]
-                    }
+                    result = future.result()[task]
+                    task_scores[result["id"]] = {k: v for k, v in result.items() if k != "id"}
                 except Exception as e:
                     logger.error(f"Error processing future result: {str(e)}")
-                
+
         return task_scores
     
     def compute_weighted_score(self, task_scores: Dict[str, Dict[str, float]]) -> Dict[str, Dict]:
@@ -237,12 +306,42 @@ class BaseMethod(ABC):
         if split != "valid":
             logger.warning(f"Evaluate split is not valid, got {split}.")
         
-        # 1. Evaluate on each task separately
-        all_task_scores = dict()
-        for task in self.tasks:
-            logger.info(f"Evaluating on task: {task}")
-            all_task_scores[task] = self.evaluate_single_task(individuals=individuals, task=task, split=split)
-        
+        def prepare_input(_: List, current_task: str, context: Dict[str, Any]) -> Dict[str, Any]:
+            logger.info(f"Evaluating on task: {current_task}")
+            return {
+                "individuals": individuals,
+                "task": current_task,
+                "split": context.get("split", split),
+            }
+
+        def run_inference(payload: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+            return self.evaluate_single_task(
+                individuals=payload["individuals"],
+                task=payload["task"],
+                split=payload["split"],
+            )
+
+        def score(inference_output: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+            return inference_output
+
+        def post_process(task_name: str, scored_output: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+            context.setdefault("task_scores", {})[task_name] = scored_output
+            return scored_output
+
+        pipeline = self._create_pipeline(
+            prepare_input=prepare_input,
+            run_inference=run_inference,
+            score=score,
+            post_process=post_process,
+        )
+
+        context = {
+            "split": split,
+            "method": "evaluate",
+        }
+
+        all_task_scores = pipeline.run(individuals, self.tasks, context=context)
+
         # 2. Compute the weighted score
         weighted_scores = self.compute_weighted_score(all_task_scores)
         
@@ -325,42 +424,63 @@ class BaseMethod(ABC):
         if split != "test":
             logger.warning(f"Ensemble test split is not valid, got {split}.")
         
-        # 1. Evaluate on each task separately
-        task_predictions = {task: [] for task in self.test_tasks}
-        task_scores = {task: dict() for task in self.test_tasks}
-        
+        def prepare_input(_: List, current_task: str, context: Dict[str, Any]) -> Dict[str, Any]:
+            logger.info(f"Ensemble test on task: {current_task}")
+            for individual in individuals:
+                individual.evaluated[current_task] = False
+            return {
+                "individuals": individuals,
+                "task": current_task,
+                "split": context.get("split", split),
+            }
+
+        def run_inference(payload: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+            return self.evaluate_single_task(
+                individuals=payload["individuals"],
+                task=payload["task"],
+                split=payload["split"],
+                return_predictions=True,
+            )
+
+        def score(inference_output: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+            return inference_output
+
+        def post_process(task_name: str, scored_output: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+            context.setdefault("task_predictions", {}).setdefault(task_name, [])
+            context.setdefault("task_scores", {}).setdefault(task_name, {})
+            for individual_id, result in scored_output.items():
+                context["task_scores"][task_name][individual_id] = result["score"]
+                context["task_predictions"][task_name].append(
+                    {
+                        "id": individual_id,
+                        "score": result["score"],
+                        "predictions": result.get("predictions", {}),
+                    }
+                )
+                self.state.setdefault('test', {}).setdefault(task_name, {})[individual_id] = result["score"]
+                logger.info(
+                    f"Test {task_name} - ID: {individual_id}, Score: {result['score']:.4f}"
+                )
+            return scored_output
+
+        pipeline = self._create_pipeline(
+            prepare_input=prepare_input,
+            run_inference=run_inference,
+            score=score,
+            post_process=post_process,
+        )
+
+        context = {
+            "split": split,
+            "method": "ensemble_test",
+            "task_predictions": {task: [] for task in self.test_tasks},
+            "task_scores": {task: {} for task in self.test_tasks},
+        }
+
         try:
-            for task in self.test_tasks:
-                logger.info(f"Ensemble test on task: {task}")
-                with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                    futures = []
-                    for idx, individual in enumerate(individuals):
-                        individual.evaluated[task] = False
-                        futures.append(
-                            executor.submit(
-                                individual.fitness,
-                                task=task,
-                                llm=self.llms[idx%len(self.llms)],
-                                lora_path=individual.weight_path,
-                                split=split,
-                                return_predictions=True,
-                            )
-                        )
-                
-                    for future in as_completed(futures):
-                        try:
-                            result = future.result()
-                            task_scores[task][result["id"]] = result["score"]
-                            self.state['test'][task][result['id']] = result['score']
-                            task_predictions[task].append(dict(
-                                id=result["id"],
-                                score=result["score"],
-                                predictions=result["predictions"]
-                            ))
-                            logger.info(f"Test {task} - ID: {result['id']}, Score: {result['score']:.4f}")
-                            
-                        except Exception as e:
-                            logger.error(f"Error processing future result: {str(e)}")
+            pipeline.run(individuals, self.test_tasks, context=context)
+            task_predictions = context["task_predictions"]
+            task_scores = context["task_scores"]
             
             ensemble_results = {
                 "task_results": {},
