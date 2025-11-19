@@ -116,9 +116,16 @@ class PSO(BaseMethod):
         
         logger.info(f"Initialization finished in {end_time-start_time:.2f} seconds.")
         
-        self.update_optim_state(step=0, time=end_time-start_time, weighted_scores=weighted_scores)
-        self.save_optim_state(state=self.state)
-        self.report_state(step=0)
+        self.state_manager.update_step(
+            step=0,
+            time=end_time - start_time,
+            individuals=self.individuals,
+            weighted_scores=weighted_scores,
+            tasks=self.tasks,
+            global_state=self.get_global_state_snapshot(),
+        )
+        self.state_manager.save()
+        self.state_manager.report_step(step=0)
     
     def velocity_update(self) -> None:
         for p in self.individuals:
@@ -161,9 +168,16 @@ class PSO(BaseMethod):
         end_time = time.time()
         logger.info(f"Step {step} finished in {end_time-start_time:.2f} seconds.")
         
-        self.update_optim_state(step=step, time=end_time-start_time, weighted_scores=weighted_scores)
-        self.save_optim_state(state=self.state)    
-        self.report_state(step=step)
+        self.state_manager.update_step(
+            step=step,
+            time=end_time - start_time,
+            individuals=self.individuals,
+            weighted_scores=weighted_scores,
+            tasks=self.tasks,
+            global_state=self.get_global_state_snapshot(),
+        )
+        self.state_manager.save()
+        self.state_manager.report_step(step=step)
         
     def search(self):
         start_time = time.time()
@@ -188,7 +202,7 @@ class PSO(BaseMethod):
         try:
             self.save_final_state(individuals=self.individuals, time=end_time-start_time)
         except Exception as e:
-            self.save_optim_state(self.state)
+            self.state_manager.save()
             logger.error(f"Error saving final state: {e}")
             
         if self.plot_enabled:

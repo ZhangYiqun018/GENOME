@@ -156,9 +156,16 @@ class GenomePlus(BaseMethod):
         end_time = time.time()
         logger.info(f"Init time: {(end_time - start_time):.2f} seconds.")
         
-        self.update_optim_state(step=0, time=end_time - start_time, weighted_scores=weighted_scores)
-        self.save_optim_state(self.state)
-        self.report_state(step=0)
+        self.state_manager.update_step(
+            step=0,
+            time=end_time - start_time,
+            individuals=self.individuals,
+            weighted_scores=weighted_scores,
+            tasks=self.tasks,
+            global_state=self.get_global_state_snapshot(),
+        )
+        self.state_manager.save()
+        self.state_manager.report_step(step=0)
 
     def crossover(self, method: str, parent_size: int = 2) -> None:
         """Perform crossover operation for GA optimization.
@@ -354,9 +361,16 @@ class GenomePlus(BaseMethod):
         
         end_time = time.time()
         logger.info(f"Step {step} consume time: {(end_time - start_time):.2f} seconds.")
-        self.update_optim_state(step=step, time=end_time - start_time, weighted_scores=weighted_scores)
-        self.save_optim_state(self.state)
-        self.report_state(step=step)
+        self.state_manager.update_step(
+            step=step,
+            time=end_time - start_time,
+            individuals=self.individuals,
+            weighted_scores=weighted_scores,
+            tasks=self.tasks,
+            global_state=self.get_global_state_snapshot(),
+        )
+        self.state_manager.save()
+        self.state_manager.report_step(step=step)
     
     def search(self) -> None:
         """Start Hybrid (PSO-GA) search process.
@@ -381,7 +395,7 @@ class GenomePlus(BaseMethod):
         try:
             self.save_final_state(individuals=self.individuals, time=time.time() - start_time)
         except Exception as e:
-            self.save_optim_state(self.state)
+            self.state_manager.save()
             logger.error(f"Save final state failed: {e}")
 
         if self.plot_enabled:

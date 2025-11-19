@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 from src.evaluate.bert_score import get_best_sentence
 from src.evaluate.FLORES101.scoring import calcuate_bleu_score
+from src.orchestration.state_manager import StateManager
 
 
 class BaseMethod(ABC):
@@ -56,13 +57,21 @@ class BaseMethod(ABC):
         self.early_stop = config.early_stop
         self.early_stop_iter = config.early_stop_iter
         
-        # Initialize workspace and state
-        self.state = {}
+        # Initialize workspace and state manager
         self.init_workspace()
+        self.state_manager = StateManager(self.workspace)
         self.init_models()
         
         # Save initial config
         self.config.save(self.workspace)
+
+    @property
+    def state(self) -> Dict:
+        return self.state_manager.state
+
+    @state.setter
+    def state(self, value: Dict) -> None:
+        self.state_manager.state = value
     
     def init_workspace(self) -> None:
         """Initialize the workspace with a standardized directory structure."""
@@ -113,16 +122,15 @@ class BaseMethod(ABC):
             self.global_min_task_scores = task_scores.copy()
             self.global_min_fitness_weight = load_lora_weight(path)
             logger.info(f"Global min updated: {self.global_min_fitness_score:.4f}")
-    
-    def report_state(self, step: int) -> None:
-        state = self.state[f"step_{step}"]
-        global_max_fitness_score = state["global_max_fitness_score"]
-        global_min_fitness_score = state["global_min_fitness_score"]
-        average_fitness_score = state["average_fitness_score"]
-        logger.info(
-            f"Step: {step}, Global max: {global_max_fitness_score:.4f}, Global min: {global_min_fitness_score:.4f}, Average fitness score: {average_fitness_score:.4f}"
-        )
-        
+
+    def get_global_state_snapshot(self) -> Dict[str, Any]:
+        return {
+            "max_score": self.global_max_fitness_score,
+            "max_path": self.global_max_fitness_path,
+            "min_score": self.global_min_fitness_score,
+            "min_path": self.global_min_fitness_path,
+        }
+
     def save_final_state(self, individuals: List, time: float) -> None:
         """Save final state and generate plots."""
         # Calculate weighted test scores
@@ -144,7 +152,7 @@ class BaseMethod(ABC):
         }
         
         # Save state
-        self.save_optim_state(self.state)
+        self.state_manager.save()
         logger.info(
             f"Best individual id: {test_id}, "
             f"Test performance: {test_score:.4f}"
@@ -425,7 +433,7 @@ class BaseMethod(ABC):
         except Exception as e:
             logger.error(f"Error in ensemble test method: {str(e)}")
         
-        self.save_optim_state(state=self.state)
+        self.state_manager.save()
         
         return ensemble_results
     
@@ -584,11 +592,6 @@ class BaseMethod(ABC):
             
         return merged_state_dict
     
-    def save_optim_state(self, state: Dict):
-        """Save optimization state to JSON file."""
-        with open(os.path.join(self.workspace, "state.json"), "w") as f:
-            json.dump(state, indent=4, ensure_ascii=False, fp=f)
-            
     def _majority_vote(self, task: str, results: List[Dict]) -> Dict:
         """Use majority voting to determine the final answer.
         
@@ -815,54 +818,6 @@ class BaseMethod(ABC):
     def search(self) -> None:
         """Execute the optimization search process."""
         pass
-    
-    def update_optim_state(self, step: int, time: float, weighted_scores: Dict[str, Dict]=None)-> None:
-        if weighted_scores:
-            task_stats = {task: {"max": -float("inf"), "min": float("inf"), "sum": 0} for task in self.tasks}
-            weighted_stats = {"max": -float("inf"), "min": float("inf"), "sum": 0}
-
-            # 收集统计信息
-            for individual_data in weighted_scores.values():
-                # 更新加权分数统计
-                weighted_score = individual_data["weighted_score"]
-                weighted_stats["max"] = max(weighted_stats["max"], weighted_score)
-                weighted_stats["min"] = min(weighted_stats["min"], weighted_score)
-                weighted_stats["sum"] += weighted_score
-                
-                # 更新每个任务的统计
-                for task, score in individual_data["task_scores"].items():
-                    task_stats[task]["max"] = max(task_stats[task]["max"], score)
-                    task_stats[task]["min"] = min(task_stats[task]["min"], score)
-                    task_stats[task]["sum"] += score
-        
-            n_individuals = len(weighted_scores)
-            
-            self.state[f"step_{step}"] = {
-                "global_max_fitness_path": self.global_max_fitness_path,
-                "global_max_fitness_score": self.global_max_fitness_score,
-                "global_min_fitness_path": self.global_min_fitness_path,
-                "global_min_fitness_score": self.global_min_fitness_score,
-                "average_fitness_score": sum([i.fitness_score for i in self.individuals])/len(self.individuals),
-                "consume_time": time,
-                "weighted_scores": {
-                    "max": weighted_stats["max"],
-                    "min": weighted_stats["min"],
-                    "avg": weighted_stats["sum"] / n_individuals,
-                },
-                "task_scores": {
-                    task: {"max": task_stats[task]["max"], "min": task_stats[task]["min"], "avg": task_stats[task]["sum"] / n_individuals} for task in self.tasks
-                }
-            }
-        else:
-            self.state[f"step_{step}"] = {
-                "global_max_fitness_path": self.global_max_fitness_path,
-                "global_max_fitness_score": self.global_max_fitness_score,
-                "global_min_fitness_path": self.global_min_fitness_path,
-                "global_min_fitness_score": self.global_min_fitness_score,
-                "all_fitness_score": [i.fitness_score for i in self.individuals],
-                "average_fitness_score": sum([i.fitness_score for i in self.individuals])/len(self.individuals),
-                "consume_time": time,
-            }
     
     def plot_optimization_curves(self):
         """Plot optimization curves including:
