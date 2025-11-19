@@ -36,11 +36,11 @@ class Evaluator(ABC):
     def load_data(self, split: str):
         pass
     
-    def evaluate(self, method: str, **kwargs):
+    def evaluate(self, method: str, max_samples: int | None = None, **kwargs):
         if method == Method.API:
-            return self.api_evaluate(**kwargs)
+            return self.api_evaluate(max_samples=max_samples, **kwargs)
         elif method == Method.LOCAL:
-            return self.local_evaluate(**kwargs)
+            return self.local_evaluate(max_samples=max_samples, **kwargs)
         else:
             raise ValueError(f"Invalid method: {method}")
     

@@ -38,6 +38,7 @@ class BaseMethod(ABC):
         self.pools = config.pools
         self.max_workers = len(self.llm_base_url)
         self.plot_enabled = config.plot_enabled
+        self.max_valid_samples = getattr(config, "max_valid_samples", 200)
         
         # Global state tracking
         self.global_max_fitness_score = -100
@@ -180,8 +181,10 @@ class BaseMethod(ABC):
         
         return perplexity
     
-    def evaluate_single_task(self, individuals: List, task: str, split: str = "valid") -> Dict[str, Any]:
+    def evaluate_single_task(self, individuals: List, task: str, split: str = "valid", max_valid_samples: int | None = None) -> Dict[str, Any]:
         """Evaluate individuals on a single task."""
+        if max_valid_samples is None:
+            max_valid_samples = self.max_valid_samples
         task_scores = {}
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = []
@@ -192,7 +195,9 @@ class BaseMethod(ABC):
                         task=task,
                         llm=self.llms[idx % len(self.llms)],
                         lora_path=individual.weight_path,
-                        split=split
+                        split=split,
+                        max_samples=max_valid_samples if split == "valid" else None,
+                        model_name_or_path=self.model_name_or_path,
                     )
                 )
             #TODO: try to fix parallel bug, delete as_completed
@@ -230,18 +235,25 @@ class BaseMethod(ABC):
             
         return weighted_scores
     
-    def evaluate(self, individuals: List, split: str = "valid") -> Dict[str, Any]:
+    def evaluate(self, individuals: List, split: str = "valid", max_valid_samples: int | None = None) -> Dict[str, Any]:
         """Evaluate the models."""
         logger.info(f"Start evaluating {len(individuals)} individuals on {len(self.tasks)} tasks...")
-        
+
         if split != "valid":
             logger.warning(f"Evaluate split is not valid, got {split}.")
+        if max_valid_samples is None:
+            max_valid_samples = self.max_valid_samples
         
         # 1. Evaluate on each task separately
         all_task_scores = dict()
         for task in self.tasks:
             logger.info(f"Evaluating on task: {task}")
-            all_task_scores[task] = self.evaluate_single_task(individuals=individuals, task=task, split=split)
+            all_task_scores[task] = self.evaluate_single_task(
+                individuals=individuals,
+                task=task,
+                split=split,
+                max_valid_samples=max_valid_samples,
+            )
         
         # 2. Compute the weighted score
         weighted_scores = self.compute_weighted_score(all_task_scores)

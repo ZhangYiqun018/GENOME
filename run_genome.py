@@ -58,6 +58,10 @@ def parse_args():
     parser.add_argument(
         "--early_stop_iter", type=int, default=5,
     )
+    parser.add_argument(
+        "--max_valid_samples", type=int, default=200,
+        help="Maximum number of validation samples per task",
+    )
 
     # hyperparameters
     parser.add_argument("--cross_rate", type=float, default=0.8)
@@ -99,6 +103,7 @@ def main():
         seed=args.seed,
         method = "roulette",
         workspace_prefix=args.workspace_prefix,
+        max_valid_samples=args.max_valid_samples,
     )
     genome = Genome(config=config)
     

@@ -5,6 +5,7 @@ import os
 import re
 from typing import Dict, List, Any
 from datasets import Dataset, disable_progress_bars
+from loguru import logger
 from src.deploy_vllm import online_load_lora, online_unload_lora
 from vllm.lora.request import LoRARequest
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -38,7 +39,7 @@ class MELD(Evaluator):
         self.task = "meld"
         self.seed = 42
         
-    def load_data(self, split: str) -> Dataset:
+    def load_data(self, split: str, max_samples: int | None = None) -> Dataset:
         split = Split(split)
         if split == Split.TEST:
             data = self.load_jsonl(os.path.join(DATA_DIR, f"test.json"))
@@ -50,6 +51,9 @@ class MELD(Evaluator):
             raise ValueError(f"Invalid split: {split}")
         
         data = Dataset.from_list(data)
+        if max_samples is not None and len(data) > max_samples:
+            logger.warning(f"[MELD] Capping valid set from {len(data)} to {max_samples}")
+            data = data.select(range(max_samples))
         data = data.map(lambda x: self.format_prompt(x))
         return data
     
@@ -67,15 +71,15 @@ class MELD(Evaluator):
             return match.group(1).strip()
         return "C"
     
-    def evaluate(self, method: str, **kwargs):
+    def evaluate(self, method: str, max_samples: int | None = None, **kwargs):
         if method == Method.API:
-            return self.api_evaluate(**kwargs)
+            return self.api_evaluate(max_samples=max_samples, **kwargs)
         elif method == Method.LOCAL:
-            return self.local_evaluate(**kwargs)
+            return self.local_evaluate(max_samples=max_samples, **kwargs)
         else:
             raise ValueError(f"Invalid method: {method}")
 
-    def api_evaluate(self, llm: OpenAI, lora_name: str, lora_path: str, split: str, calculate_ppl: bool=False, return_predictions: bool = False, **kwargs):
+    def api_evaluate(self, llm: OpenAI, lora_name: str, lora_path: str, split: str, calculate_ppl: bool=False, return_predictions: bool = False, max_samples: int | None = None, **kwargs):
         def single_request(messages: List, lora_name: str, reference_answer: str, index: int):
             response = llm.chat.completions.create(
                 model=lora_name,
@@ -107,7 +111,7 @@ class MELD(Evaluator):
                 result["perplexity"] = ppl_value
             return result
             
-        data = self.load_data(split=split)
+        data = self.load_data(split=split, max_samples=max_samples)
         ppls = 0
         online_load_lora(
             base_url=llm.base_url,
@@ -152,14 +156,14 @@ class MELD(Evaluator):
             results["predictions"] = predictions
         return results
     
-    def local_evaluate(self, model_name_or_path: str, lora_path: str, split: str, **kwargs):
+    def local_evaluate(self, model_name_or_path: str, lora_path: str, split: str, max_samples: int | None = None, **kwargs):
         sampling_params = SamplingParams(
             temperature=0.2,
             top_p=0.75,
             max_tokens=1024,
             seed=self.seed,
         )
-        data = self.load_data(split=split)
+        data = self.load_data(split=split, max_samples=max_samples)
         llm: LLM = self.load_model(model_name_or_path=model_name_or_path)
         
         batch_size = 1024

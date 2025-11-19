@@ -56,6 +56,10 @@ def parse_args():
         "--workspace_prefix", type=str, default=None,
         help="Optional base directory prefix for workspace outputs"
     )
+    parser.add_argument(
+        "--max_valid_samples", type=int, default=200,
+        help="Maximum number of validation samples per task",
+    )
     
     args = parser.parse_args()
     ## task_weights normalization
@@ -93,6 +97,7 @@ def main():
         phi_social=args.phi_social,
         phi_repel=args.phi_repel,
         workspace_prefix=args.workspace_prefix,
+        max_valid_samples=args.max_valid_samples,
     )
     
     # initialize and run PSO

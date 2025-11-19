@@ -21,6 +21,7 @@ class BaseConfig:
     seed: int
     # optional; keep as keyword-only to avoid ordering issues in subclasses
     workspace_prefix: Optional[str] = field(default=None, kw_only=True)
+    max_valid_samples: int = field(default=200, kw_only=True)
     
     def __post_init__(self):
         self.optimizer_time = datetime.now().isoformat()
@@ -69,3 +70,6 @@ class BaseConfig:
         # Validate seed
         if self.seed < 0:
             raise ValueError("Seed must be non-negative")
+        # Validate max samples
+        if self.max_valid_samples is not None and self.max_valid_samples <= 0:
+            raise ValueError("max_valid_samples must be positive when provided")

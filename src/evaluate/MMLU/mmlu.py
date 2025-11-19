@@ -83,15 +83,15 @@ class MMLU(Evaluator):
             return match.group(1).strip()
         return "C"
     
-    def evaluate(self, method: str, **kwargs):
+    def evaluate(self, method: str, max_samples: int | None = None, **kwargs):
         if method == Method.API:
-            return self.api_evaluate(**kwargs)
+            return self.api_evaluate(max_samples=max_samples, **kwargs)
         elif method == Method.LOCAL:
-            return self.local_evaluate(**kwargs)
+            return self.local_evaluate(max_samples=max_samples, **kwargs)
         else:
             raise ValueError(f"Invalid method: {method}")
     
-    def api_evaluate(self, llm: OpenAI, lora_name: str, lora_path: str, split: str, calculate_ppl: bool=False, return_predictions: bool=False, **kwargs) -> Dict[str, Any]:
+    def api_evaluate(self, llm: OpenAI, lora_name: str, lora_path: str, split: str, calculate_ppl: bool=False, return_predictions: bool=False, max_samples: int | None = None, **kwargs) -> Dict[str, Any]:
         def single_request(messages: List, lora_name: str, reference_answer: str, index: int):
             counter = 1
             while True:
@@ -132,9 +132,12 @@ class MMLU(Evaluator):
                     time.sleep(min(counter, 10))
                     counter += 1
                     continue
-                
+        
         counter = 0
         data = self.load_data(split=split)
+        if max_samples is not None and len(data) > max_samples:
+            logger.warning(f"[MMLU] Capping valid set from {len(data)} to {max_samples}")
+            data = data.select(range(max_samples))
         if lora_path is not None:   
             online_load_lora(
                 base_url=llm.base_url,
@@ -178,7 +181,7 @@ class MMLU(Evaluator):
         return results
     
     
-    def local_evaluate(self, model_name_or_path: str, lora_path: str | None, split: str, **kwargs):
+    def local_evaluate(self, model_name_or_path: str, lora_path: str | None, split: str, max_samples: int | None = None, **kwargs):
         sampling_params = SamplingParams(
             temperature=0.2,
             top_p=0.75,
@@ -186,6 +189,9 @@ class MMLU(Evaluator):
             seed=self.seed,
         )
         data = self.load_data(split=split)
+        if max_samples is not None and len(data) > max_samples:
+            logger.warning(f"[MMLU] Capping valid set from {len(data)} to {max_samples}")
+            data = data.select(range(max_samples))
         llm: LLM = self.load_model(model_name_or_path=model_name_or_path)
         
         batch_size=1024

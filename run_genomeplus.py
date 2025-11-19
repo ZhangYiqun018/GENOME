@@ -62,6 +62,10 @@ def parse_args():
     parser.add_argument("--phi_cognitive", type=float, default=0.2)
     parser.add_argument("--phi_social", type=float, default=0.2)
     parser.add_argument("--phi_repel", type=float, default=0.1)
+    parser.add_argument(
+        "--max_valid_samples", type=int, default=200,
+        help="Maximum number of validation samples per task",
+    )
 
     parser.add_argument("--cross_rate", type=float, default=0.8)
     parser.add_argument("--individual_mutation_rate", type=float, default=0.3)
@@ -112,6 +116,7 @@ def main():
         method=args.method,
         selection_method=args.selection_method,
         workspace_prefix=args.workspace_prefix,
+        max_valid_samples=args.max_valid_samples,
     )
     genomeplus = GenomePlus(config=config)
     genomeplus.search()

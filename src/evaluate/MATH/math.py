@@ -7,6 +7,7 @@ from vllm.lora.request import LoRARequest
 from src.utils import get_gemma_prompt, get_llama3_1_prompt
 from typing import List, Dict
 from datasets import load_dataset, Dataset, disable_progress_bars
+from loguru import logger
 from src.deploy_vllm import online_load_lora, online_unload_lora
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
@@ -30,7 +31,7 @@ class Math(Evaluator):
         self.task = "math"
         self.seed = 42
 
-    def load_data(self, split: str) -> Dataset:
+    def load_data(self, split: str, max_samples: int | None = None) -> Dataset:
         split = Split(split)
         if split == Split.TEST:
             data = self.load_jsonl(file_path=os.path.join(DATA_DIR, "test.json"))
@@ -43,6 +44,9 @@ class Math(Evaluator):
 
         # preprocess
         data = Dataset.from_list(data)
+        if max_samples is not None and len(data) > max_samples:
+            logger.warning(f"[MATH] Capping valid set from {len(data)} to {max_samples}")
+            data = data.select(range(max_samples))
         data = data.map(lambda x: self.format_prompt(x))
         return data
     
@@ -58,7 +62,7 @@ class Math(Evaluator):
             return match.group(1).strip()
         return ""
     
-    def api_evaluate(self, llm: OpenAI, lora_name: str, lora_path: str, split: str, calculate_ppl: bool=False, return_predictions: bool=False, **kwargs):
+    def api_evaluate(self, llm: OpenAI, lora_name: str, lora_path: str, split: str, calculate_ppl: bool=False, return_predictions: bool=False, max_samples: int | None = None, **kwargs):
         def single_request(messages: List, lora_name: str, reference_answer: str, index: int):
             response = llm.chat.completions.create(
                 model=lora_name,
@@ -93,7 +97,7 @@ class Math(Evaluator):
         predictions = dict()
         counter = 0
         ppls = 0
-        data = self.load_data(split=split)
+        data = self.load_data(split=split, max_samples=max_samples)
         if lora_path is not None:
             online_load_lora(
                 base_url=llm.base_url,
@@ -137,14 +141,14 @@ class Math(Evaluator):
             results["predictions"] = predictions
         return results
     
-    def local_evaluate(self, model_name_or_path: str, lora_path: str, split: str, **kwargs) -> float:
+    def local_evaluate(self, model_name_or_path: str, lora_path: str, split: str, max_samples: int | None = None, **kwargs) -> float:
         sampling_params = SamplingParams(
             temperature=0.0,
             top_p=1.0,
             max_tokens=1024,
             seed=self.seed,
         )
-        data = self.load_data(split=split)
+        data = self.load_data(split=split, max_samples=max_samples)
         llm: LLM = self.load_model(model_name_or_path=model_name_or_path)
         
         batch_size = 1024

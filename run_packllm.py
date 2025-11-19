@@ -29,6 +29,10 @@ def parse_args():
         "--workspace_prefix", type=str, default=None,
         help="Optional base directory prefix for workspace outputs"
     )
+    parser.add_argument(
+        "--max_valid_samples", type=int, default=200,
+        help="Maximum number of validation samples per task",
+    )
     return parser.parse_args()
 
 def main():
@@ -51,6 +55,7 @@ def main():
         plot_enabled=args.plot_enabled,
         combine_method=args.combine_method,
         workspace_prefix=args.workspace_prefix,
+        max_valid_samples=args.max_valid_samples,
     )
     
     packllm = PackLLM(config=config)

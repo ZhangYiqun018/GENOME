@@ -38,7 +38,7 @@ class BaseIndividual(ABC):
         )
         self.weight_path = save_path
     
-    def fitness(self, task: str, llm: OpenAI, lora_path: str, split: str, calculate_ppl: bool=False, return_predictions: bool=False, **kwargs) -> Dict:
+    def fitness(self, task: str, llm: OpenAI, lora_path: str, split: str, calculate_ppl: bool=False, return_predictions: bool=False, max_samples: int | None = None, **kwargs) -> Dict:
         """Calculate the fitness of the individual.
         Returns:
             Dict: The fitness score, id and weight path of the individual.
@@ -53,7 +53,7 @@ class BaseIndividual(ABC):
                 "score": self.task_scores[task]
             }
         
-        evaluator = EvaluatorFactory().get_evaluator(task=task)
+        evaluator = EvaluatorFactory(model_name_or_path=kwargs.get("model_name_or_path")).get_evaluator(task=task)
         result = evaluator.evaluate(
             method=Method.API, 
             llm=llm, 
@@ -62,6 +62,7 @@ class BaseIndividual(ABC):
             split=split, 
             calculate_ppl=calculate_ppl,
             return_predictions=return_predictions, 
+            max_samples=max_samples,
             **kwargs
         )
         self.task_scores[task] = result['score']
